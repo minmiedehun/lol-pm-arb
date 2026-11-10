@@ -15,9 +15,10 @@
 - 【事实】cdn.nba.com 的 403 不是 IP 封锁：不带 `Referer/Origin: https://www.nba.com` 时返回 403，带上（录制脚本默认就带）返回 200。
 - 【事实】`todaysScoreboard_00.json` 在美东 11:25 仍停在 2026-11-09，所以 `--nba-teams PHI,BOS` 当时查不到今晚这场。已给录制脚本加了回退：比分板查不到时按美东日期查全赛季赛程（v0.1.2）。**今晚直接用 `--nba-game-id 0022600212`，新旧版本脚本都适用。**
 - 【事实】Polymarket 比分推送只推正在进行的比赛；上午样本里没有 NBA，所以 NBA 消息的队名写法（76ers 还是 PHI）未核实。【判断】今晚不加 `--sports-filter`：上午实测约 2 条/秒，全部保留每小时只有几 MB，过滤反而可能把 NBA 消息滤掉。
-- 【推演】盘口数据量：赛前稳定后约 31 KB/秒（≈110 MB/小时）；开赛后会更多。【判断】Mac 上至少留 3 GB 空间。
+- 【推演】盘口数据量：赛前稳定后约 31 KB/秒（≈110 MB/小时）；开赛后会更多。【判断】提前到 15:00 启动后录制约 10 小时，Mac 上至少留 5 GB 空间。
+- 【推演】盘口清单在启动时固定：15:00 之后才上架的盘口不会被订阅。主盘（胜负、让分、总分）赛前已在，影响有限；`meta_end.json` 会列出收盘时的全部盘口，赛后可对比漏了哪些。
 
-## 19:00–19:30 在家里 Mac 上
+## 14:30–14:50 出门前在家里 Mac 上（JN 15:00 出门，改为提前启动）
 
 1. 进入项目目录，确认依赖（Python 3.9 以上）：
 
@@ -40,13 +41,13 @@ python3 recorder/pm_recorder.py --event-slug nba-bos-phi-2026-11-10 --nba-game-i
 - `pm_market#0` 到 `pm_market#9` 共 10 条 `connected`，加 `pm_sports connected`
 - 每 5 秒一行状态，`盘口消息` 数字在涨；`重连 0`
 - 最后一行：`检查结果：盘口 正常；比分推送 正常；NBA 逐回合 HTTP 403（开赛前可能还没有文件）`
-  - 开赛前 NBA 逐回合 403 正常；19:55 之后再跑一次自检，应变成“正常”
+  - 开赛前 NBA 逐回合 403 正常；脚本每 5 秒重试，文件出现后自动开始记录，不需要人在家再自检。赛后看 `nba_pbp.jsonl` 有没有内容即可
 - 输出目录里的 `clock.jsonl` 有 `offset_ms`。云端会话里 pool.ntp.org 解析失败，家里网络应该正常；如果出现 `error`，不影响录制，赛后用 time.is 的两次读数补偿
 
-3. 正式录制（19:30 前启动；4.5 小时覆盖到 00:00）：
+3. 正式录制（15:00 前启动；10 小时覆盖到约 01:00）：
 
 ```bash
-caffeinate -i python3 recorder/pm_recorder.py --event-slug nba-bos-phi-2026-11-10 --nba-game-id 0022600212 --hours 4.5 --out rec_nba-bos-phi-2026-11-10
+caffeinate -i python3 recorder/pm_recorder.py --event-slug nba-bos-phi-2026-11-10 --nba-game-id 0022600212 --hours 10 --out rec_nba-bos-phi-2026-11-10
 ```
 
 4. 出门前看一眼：每 30 秒一行状态，`盘口消息` 在涨、`重连` 不在快速增加。`caffeinate -i` 只防闲置睡眠：笔记本不要合盖，Mac mini 不用管。
