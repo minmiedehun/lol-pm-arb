@@ -27,6 +27,8 @@ JN 的研究项目：在订单簿预测市场（Polymarket、Kalshi、Predict.fu
 | --- | --- |
 | `scanner/lol_c_scan.py` | C 扫描器 v2：线性规划找跨盘口的无风险组合；实时扫描、回放录制、回放 CryptoStruct |
 | `scanner/test_scan.py` | 扫描器测试（合成数据，不联网） |
+| `scanner/c_monitor.py` | C 实时监控（决赛用）：WebSocket 增量维护订单簿、断线重连、REST 抽查与后备、单局结算后收窄情景、机会段日志 |
+| `scanner/test_monitor.py` | 监控测试（本地模拟 Gamma / CLOB / WebSocket，不联网） |
 | `recorder/pm_recorder.py` | 只读录制：Polymarket 盘口与比分推送、NBA 逐回合、时钟偏差 |
 | `recorder/test_recorder.py` | 录制脚本测试（本地模拟服务器） |
 | `taplog/index.html` | 现场打点页源码（线上版见下方链接） |
@@ -47,6 +49,11 @@ python3 scanner/lol_c_scan.py live --event-slug lol-blg-gen-2026-11-14 --show-ma
 python3 scanner/lol_c_scan.py replay rec_录制目录/                                  # 回放 pm_recorder 的录制
 python3 scanner/lol_c_scan.py cs-inspect 文件.txt.zst --event-slug <赛事slug> --head 5
 python3 scanner/lol_c_scan.py cs-replay 数据目录/ --event-slug <slug1> <slug2>      # 回放 CryptoStruct
+
+# C 实时监控（只盯一场；决赛用法见“下一步”第 5 条）
+python3 scanner/c_monitor.py --event-slug lol-blg-gen-2026-11-14 --check                     # 20 秒自检
+caffeinate -i python3 scanner/c_monitor.py --event-slug lol-blg-gen-2026-11-14 --hours 8     # 正式监控
+python3 scanner/lol_c_scan.py replay rec_c_lol-blg-gen-2026-11-14_<时间>/                     # 赛后复核监控录下的数据
 
 # 录制
 python3 recorder/pm_recorder.py --event-slug <slug> --check          # 15 秒自检
@@ -87,17 +94,22 @@ python3 recorder/pm_recorder.py --event-slug <slug> --hours 4        # 正式录
   - 价格 0..1，Polymarket 最小变动 0.001。每个系列每天 €1。
   - 免费样本 `lol-tl2-los-2026-10-30-game2`。
 - 【事实】Barclays 场馆禁止笔记本、平板，手机可个人录制，禁止未授权直播。
+- 【事实】决赛盘口（11/10 Gamma/CLOB 实测）：系列赛胜负 `seconds_delay` = 1，`game_start_time` = 2026-11-14T19:00:00Z，最小变动 0.01，最小下单 5 股；赛果盘口 9 个。
+- 【事实】已结束的 iG 对 Gen.G（0:3）在 Gamma 上：第 4 局胜负按 `["0.5","0.5"]` 结算，印证“没打的单局 50-50”；Gen.G 让 1.5/2.5（`-game-handicap-home-*`）结算为 `["1","0"]`。赛事对象另有 `score`（如 `000-000|0-3|Bo5`）和 `period`（`3/5`）字段。
+- 【事实】market WebSocket 加 `custom_feature_enabled` 后会收到全平台的 `new_market` 广播（11/10 实测 5 分钟 190 条），与订阅无关；监控只保留本场的。
 - 【事实】JN 说明：三个平台的交易主体合规已确认、都能直接用（11/09）；11/14 在纽约通过 Bagel（走 Polymarket API）交易（11/10）。
 
 ## 尚未核实的假设（改代码前先看）
 
 1. CryptoStruct 文件里的价格属于盘口的哪个选项（默认第一个），`native_code` 存的是什么。用免费样本跑 `cs-inspect` 核实；“交叉占比”应接近 0。
-2. Polymarket `price_change` 的 `size` 是该档新的总量而非增量，`side=SELL` 是卖单档。文档没定义。`replay` 会打印“增量重建与快照一致”的比例来检验。
+2. ~~Polymarket `price_change` 的 `size` 是该档新的总量而非增量，`side=SELL` 是卖单档。~~ **已核实（11/10，决赛盘口实测）**：每条 `price_change` 自带该选项的 `best_bid`/`best_ask`，按“size 为新总量、SELL 为卖单档”重建后，6 分钟 2,140 条全部一致；另 72 次 REST `/book` 抽查全部一致。文档仍没写定义，`c_monitor.py` 持续核对，对不上会报警并用 REST 修复。
 3. 买入手续费从股数扣还是从资金扣，文档没写；按资金计入成本。
-4. Worlds 决赛的真实题目和选项写法：测试是按镜像页构造的，需用 `meta` 导出核对。
+4. ~~Worlds 决赛的真实题目和选项写法。~~ **已核实（11/10，`meta` 导出 42 个盘口）**：题目、选项、slug 后缀与测试构造一致，9 个赛果盘口全部识别（系列赛胜负、第 1–4 局、总局数 3.5/4.5、Gen.G 让 1.5/2.5，让局 slug 为 `-game-handicap-home-*`、选项顺序 Gen.G 在前）；没有第 5 局胜负（第 5 局只有道具盘）；33 个道具盘跳过。
 5. `live --discover` 用的 Gamma 标签 `league-of-legends` 没实测。
-6. 已结束赛事能否用 `events?slug=` 直接取到；扫描器会再试 `&closed=true`。
-7. BLG 对 T1 半决赛的 slug 未知；iG 对 Gen.G 是 `lol-ig1-gen-2026-11-07`（来自镜像页）。
+6. ~~已结束赛事能否用 `events?slug=` 直接取到。~~ **已核实（11/10）**：`lol-ig1-gen-2026-11-07` 直接取到；扫描器仍保留 `&closed=true` 的备用请求。
+7. BLG 对 T1 半决赛的 slug 未知；iG 对 Gen.G 是 `lol-ig1-gen-2026-11-07`（来自镜像页；11/10 已用 Gamma 取到，已结束赛事 `events?slug=` 直接可取）。
+8. `price_change` 在某选项卖单被撤空时 `best_ask` 给什么值（0 还是 1）没见到实例；监控把两者都当“无卖单”。
+9. 单局盘口在比赛中多快结算（Gamma `closed` + `outcomePrices`）未知：监控只在正式结算后收窄情景，结算慢则这期间按全部情景算（只会漏报，不会误报）。
 
 ## 运行环境
 
@@ -141,10 +153,12 @@ python3 recorder/pm_recorder.py --event-slug <slug> --hours 4        # 正式录
 ## 下一步（按时间）
 
 1. **11/10 晚**：76ers 对 Celtics 的 NBA 彩排（B）。录制脚本加打点页，场内只打点、不录像（Xfinity Mobile Arena 禁止录像录音设备）。11/11 对齐三方时间戳，出彩排报告。
-2. **11/13 前**：`meta --event-slug lol-blg-gen-2026-11-14`，核对决赛盘口识别。网页版按上面设好白名单后，可以在会话里直接跑。
+2. ~~**11/13 前**：`meta --event-slug lol-blg-gen-2026-11-14`，核对决赛盘口识别。~~ 11/10 已完成，见上方假设 4。11/14 赛前再跑一次 `meta`，看有没有新上架的赛果盘口（监控也会每 60 秒自动检查）。
 3. 下载 CryptoStruct 免费样本，`cs-inspect` 确认价格方向和交叉占比。网页版同样可以直接下载和运行。
 4. 买 11/07–11/09 三天的日包（约 €3；两场半决赛都是美东 17:00 开打、跨 UTC 午夜），`cs-replay` 两场半决赛，出第一份真实的 C 统计。
 5. **11/14**：决赛按研究文档第四节协议实测 B；同时用 `pm_recorder.py` 录决赛全部盘口，赛后用 `replay` 跑 C。可用 Bagel 下 1–2 笔最小额单，测“按下到成交”的耗时。
+   - C 实时监控：美东 13:00 前在家里常开的 Mac 上先 `c_monitor.py ... --check`，看到“可以正式开跑”再 `caffeinate -i python3 scanner/c_monitor.py --event-slug lol-blg-gen-2026-11-14 --hours 8`。与 `pm_recorder.py` 可同时跑（各自一条连接）。系列赛胜负结算 5 分钟后自动停止。
+   - 报出的机会只是候选：多腿不能同时成交、吃单延迟（`seconds_delay` = 1）都没建模；“若开赛后中途终止”一行为负时，那是靠等式锁定、有弃权风险的组合。单局正式结算后，已成定局却仍低于 1 的选项（如 BLG +2.5 @0.99）也会被报出，加 `--strict` 可只报中途终止也不亏的组合。
 6. 用样本统计 BO5 关系的偏离：可成交价、含费、存续时间、可成交量；再决定是否买全量数据。
 7. 之后：A 的事件匹配与录制；以挂单为主的 C（带对冲的做市）单独评估库存与腿风险。
 

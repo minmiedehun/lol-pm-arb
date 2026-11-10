@@ -24,6 +24,8 @@ python3 -m pip install -r requirements.txt
 
 ```bash
 python3 scanner/lol_c_scan.py meta --event-slug lol-blg-gen-2026-11-14
+python3 scanner/c_monitor.py --event-slug lol-blg-gen-2026-11-14 --check                  # C 实时监控自检
+caffeinate -i python3 scanner/c_monitor.py --event-slug lol-blg-gen-2026-11-14 --hours 8  # C 实时监控（决赛）
 python3 scanner/lol_c_scan.py cs-inspect 样本.txt.zst --event-slug <赛事slug> --head 5
 python3 scanner/lol_c_scan.py cs-replay 数据目录/ --event-slug <slug1> <slug2>
 python3 recorder/pm_recorder.py --event-slug <slug> --check

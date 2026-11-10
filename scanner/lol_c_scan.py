@@ -415,14 +415,29 @@ def scenario_label(s: Scenario, mt: Match) -> str:
 
 # ============================================================ 线性规划
 
-class Model:
-    """一场比赛的结算矩阵：每个 token 在每个情景下的回款。"""
+def consistent(s: Scenario, known: dict) -> bool:
+    """known = {局号: 'A'/'B'}：已经打完并正式结算的单局。打完了第 k 局，情景里就必须至少有 k 局且第 k 局胜者相同；
+    因此“整场取消”和比第 k 局更早中止的情景都被排除。"""
+    return all(len(s.games) >= k and s.games[k - 1] == w for k, w in known.items())
 
-    def __init__(self, mt: Match, void: bool = True, strict: bool = False):
+
+class Model:
+    """一场比赛的结算矩阵：每个 token 在每个情景下的回款。
+    known 给出已正式结算的单局结果时，只保留与之相符的情景（赛中用；排除不可能的情景不会产生假机会）。"""
+
+    def __init__(self, mt: Match, void: bool = True, strict: bool = False, known: dict | None = None):
         bo = mt.best_of
         self.mt = mt
+        self.known = dict(known or {})
         self.main = build_scenarios(bo, void=void, abandon=strict)
         self.tail = [] if strict else [s for s in build_scenarios(bo, void=False, abandon=True) if s.kind == "abandon"]
+        if self.known:
+            main = [s for s in self.main if consistent(s, self.known)]
+            if main:                       # 已知结果自相矛盾（不应发生）时不做条件化
+                self.main = main
+                self.tail = [s for s in self.tail if consistent(s, self.known)]
+            else:
+                self.known = {}
         self.tail_labels = [scenario_label(s, mt) for s in self.tail]
         self.tok: dict = {}
         for leg in mt.legs:
