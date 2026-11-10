@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.DS_Store
+# 录制与回放产出的数据
+rec_*/
+data/
+*.zst
+*.zstd
+cs_scan_*.csv
+c_scan_episodes.csv

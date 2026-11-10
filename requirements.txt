@@ -1,0 +1,4 @@
+websockets>=12     # recorder
+numpy              # scanner
+scipy              # scanner（线性规划用 HiGHS）
+zstandard          # scanner 读 CryptoStruct .zst 文件；测试也要用

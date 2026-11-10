@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>现场打点</title>
+<style>
+:root {
+  /* 单一深色主题：场馆里暗、省电、不晃眼。布局：时钟条 → 3×3 打点键 → 撤销与备注 → 最近打点 → 设置 */
+  --bg: #0e1114;
+  --surface: #161a1f;
+  --surface-2: #1e242a;
+  --line: #2b323a;
+  --text: #e9edf0;
+  --muted: #8e98a1;
+  --a: #f2a541;
+  --a-bg: rgba(242, 165, 65, 0.16);
+  --b: #63a9ff;
+  --b-bg: rgba(99, 169, 255, 0.16);
+  --ok: #46c38b;
+  --warn: #e7b43c;
+  --bad: #f06363;
+  --font-body: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+body[data-preset="lol"] {
+  --a: #5fa4ff;
+  --a-bg: rgba(95, 164, 255, 0.17);
+  --b: #f26b6b;
+  --b-bg: rgba(242, 107, 107, 0.16);
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 15px/1.45 var(--font-body);
+  padding: max(10px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+}
+main { max-width: 520px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+
+/* 顶部：场次、局数、同步状态、时钟 */
+.top { display: flex; flex-direction: column; gap: 4px; }
+.row { display: flex; align-items: center; gap: 8px; min-height: 34px; }
+.session { flex: 1 1 auto; min-width: 0; background: none; border: 0; padding: 0; text-align: left; font-weight: 650; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.session small { color: var(--muted); font-weight: 400; margin-left: 6px; }
+.game { display: flex; align-items: center; gap: 2px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; }
+.game button { width: 34px; height: 32px; border: 0; background: none; font-size: 18px; }
+.game span { font-size: 14px; min-width: 52px; text-align: center; font-variant-numeric: tabular-nums; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); font-size: 13px; white-space: nowrap; }
+.chip i { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.chip[data-s="ok"] i { background: var(--ok); }
+.chip[data-s="warn"] i { background: var(--warn); }
+.chip[data-s="bad"] { border-color: var(--bad); }
+.chip[data-s="bad"] i { background: var(--bad); }
+.clockline { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.clock { font: 600 30px/1.1 var(--font-mono); font-variant-numeric: tabular-nums; letter-spacing: -0.5px; }
+.count { color: var(--muted); font-size: 13px; text-align: right; }
+.banner { background: rgba(240, 99, 99, 0.12); border: 1px solid var(--bad); border-radius: 10px; padding: 8px 10px; font-size: 13px; }
+
+/* 打点键 */
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; touch-action: manipulation; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.key {
+  min-height: 86px; padding: 8px 6px; border-radius: 14px;
+  border: 1px solid var(--line); background: var(--surface-2);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  touch-action: manipulation; transition: transform 80ms ease, filter 80ms ease;
+}
+.key[data-team="A"] { background: var(--a-bg); border-color: var(--a); }
+.key[data-team="B"] { background: var(--b-bg); border-color: var(--b); }
+.key .big { font-size: 26px; font-weight: 700; line-height: 1.1; }
+.key .small { font-size: 12.5px; color: var(--muted); line-height: 1.2; text-align: center; }
+.key[data-team="A"] .small { color: var(--a); }
+.key[data-team="B"] .small { color: var(--b); }
+.key.down { transform: scale(0.96); filter: brightness(1.35); }
+.key.hit { animation: hit 260ms ease-out; }
+@keyframes hit { 0% { filter: brightness(2); } 100% { filter: none; } }
+
+.tools { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.tool { min-height: 44px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); font-size: 14px; }
+.note { display: flex; gap: 8px; }
+.note input { flex: 1; min-width: 0; height: 44px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); padding: 0 12px; }
+.note button, .btn { min-height: 44px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); }
+
+/* 最近打点 */
+.log { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; }
+.log-head { display: flex; justify-content: space-between; align-items: baseline; }
+.log h2 { font-size: 14px; margin: 0; font-weight: 600; }
+.log-head span { color: var(--muted); font-size: 12.5px; }
+.log ol { list-style: none; margin: 6px 0 0; padding: 0; }
+.log li { display: grid; grid-template-columns: 98px 1fr auto; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); align-items: baseline; }
+.log li:first-child { border-top: 0; }
+.log .t { font: 500 13px var(--font-mono); font-variant-numeric: tabular-nums; color: var(--muted); }
+.log .l { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.log .l em { font-style: normal; font-weight: 400; color: var(--muted); }
+.log .d { font: 12px var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.log li.del .l, .log li.del .t { text-decoration: line-through; opacity: 0.5; }
+.log .empty { color: var(--muted); border: 0; display: block; padding: 8px 0 2px; }
+.tagA { color: var(--a); }
+.tagB { color: var(--b); }
+
+/* 设置 */
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
+summary { padding: 12px; font-weight: 600; cursor: pointer; list-style: none; }
+summary::-webkit-details-marker { display: none; }
+summary::after { content: "展开"; float: right; color: var(--muted); font-weight: 400; font-size: 13px; }
+details[open] summary::after { content: "收起"; }
+.panel { padding: 0 12px 14px; display: flex; flex-direction: column; gap: 14px; }
+.panel h3 { font-size: 13px; color: var(--muted); font-weight: 600; margin: 0; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.seg label { padding: 9px 16px; background: var(--surface-2); cursor: pointer; }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg input:checked + span { color: var(--bg); }
+.seg label:has(input:checked) { background: var(--text); color: var(--bg); }
+.fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.fields label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); min-width: 0; }
+.fields input { width: 100%; min-width: 0; }
+.fields input, .calib input, .calib select { height: 42px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); padding: 0 10px; color: var(--text); }
+.calib { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.calib input { width: 96px; }
+.hint, .fine { color: var(--muted); font-size: 13px; margin: 0; }
+.hint a { color: var(--text); }
+.calist { margin: 0; padding-left: 18px; font-size: 13px; }
+textarea { width: 100%; min-height: 160px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); padding: 8px; font: 12px/1.4 var(--font-mono); }
+.danger { border-color: var(--bad); }
+
+/* 选方面板与提示 */
+.picker { position: fixed; left: 0; right: 0; bottom: 0; padding: 12px max(14px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); background: rgba(14, 17, 20, 0.96); border-top: 1px solid var(--line); z-index: 10; }
+.picker .inner { max-width: 520px; margin: 0 auto; display: flex; flex-direction: column; gap: 10px; }
+.picker p { margin: 0; font-weight: 600; }
+.picker .opts { display: grid; grid-template-columns: 1fr 1fr 0.7fr; gap: 8px; }
+.picker button { min-height: 64px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface-2); font-size: 20px; font-weight: 700; }
+.picker button[data-team="A"] { background: var(--a-bg); border-color: var(--a); }
+.picker button[data-team="B"] { background: var(--b-bg); border-color: var(--b); }
+.picker button[data-team=""] { font-size: 15px; font-weight: 500; color: var(--muted); }
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: max(18px, env(safe-area-inset-bottom)); background: var(--text); color: var(--bg); padding: 10px 14px; border-radius: 12px; font-size: 14px; display: flex; gap: 12px; align-items: center; z-index: 20; max-width: calc(100% - 28px); }
+.toast button { background: none; border: 0; color: var(--bg); font-weight: 700; text-decoration: underline; padding: 0; }
+[hidden] { display: none !important; }
+@media (prefers-reduced-motion: reduce) { .key, .key.hit { transition: none; animation: none; } }
+</style>
+</head>
+<body data-preset="nba">
+<main>
+  <header class="top">
+    <div class="row">
+      <button id="sessionBtn" class="session" type="button" aria-controls="settings">现场打点</button>
+      <div id="gameCtl" class="game" hidden>
+        <button id="gameMinus" type="button" aria-label="上一局">−</button>
+        <span id="gameLabel">第 1 局</span>
+        <button id="gamePlus" type="button" aria-label="下一局">+</button>
+      </div>
+      <span id="sync" class="chip" data-s="wait" role="status"><i></i><span>连接数据库…</span></span>
+    </div>
+    <div class="clockline">
+      <span id="clock" class="clock" aria-label="手机当前时间">--:--:--.-</span>
+      <span id="count" class="count">0 条</span>
+    </div>
+  </header>
+
+  <div id="banner" class="banner" hidden></div>
+
+  <div id="grid" class="grid" aria-label="打点键"></div>
+
+  <div class="tools">
+    <button id="undo" class="tool" type="button">撤销上一条</button>
+    <button id="noteToggle" class="tool" type="button">给上一条加备注</button>
+  </div>
+  <form id="noteForm" class="note" hidden>
+    <input id="noteInput" type="text" maxlength="120" placeholder="例如：Maxey 底角三分" autocomplete="off">
+    <button type="submit">保存</button>
+  </form>
+
+  <section class="log" aria-label="最近打点">
+    <div class="log-head"><h2>最近打点</h2><span id="logMeta"></span></div>
+    <ol id="log"></ol>
+  </section>
+
+  <details id="settings">
+    <summary>场次、对时与导出</summary>
+    <div class="panel">
+      <div>
+        <h3>项目</h3>
+        <div class="seg" role="radiogroup" aria-label="项目">
+          <label><input type="radio" name="preset" value="nba" id="presetNba"><span>NBA</span></label>
+          <label><input type="radio" name="preset" value="lol" id="presetLol"><span>LoL</span></label>
+        </div>
+        <p id="presetHint" class="hint" hidden>当前场次已有打点。要换项目，请先点“开始新场次”。</p>
+      </div>
+      <div id="teamFields" class="fields">
+        <label for="teamA">A 队<input id="teamA" type="text" maxlength="12" autocomplete="off"></label>
+        <label for="teamB">B 队<input id="teamB" type="text" maxlength="12" autocomplete="off"></label>
+      </div>
+      <div>
+        <h3>对时</h3>
+        <p class="hint">用浏览器打开 <a href="https://time.is" target="_blank" rel="noopener">time.is</a>，看手机时钟快了还是慢了多少秒，开赛前和结束后各记一次。</p>
+        <div class="calib">
+          <select id="calDir" aria-label="快或慢"><option value="1">快了</option><option value="-1">慢了</option></select>
+          <input id="calVal" type="number" inputmode="decimal" step="0.001" min="0" max="120" placeholder="0.000" aria-label="秒数"> 秒
+          <button id="calPre" class="btn" type="button">记为赛前</button>
+          <button id="calPost" class="btn" type="button">记为赛后</button>
+        </div>
+        <ul id="calList" class="calist"></ul>
+      </div>
+      <div>
+        <h3>导出与场次</h3>
+        <div class="calib">
+          <button id="copyCsv" class="btn" type="button">复制 CSV</button>
+          <button id="newSession" class="btn danger" type="button">开始新场次</button>
+        </div>
+        <textarea id="csvOut" readonly hidden aria-label="CSV 文本"></textarea>
+      </div>
+      <p class="fine">打点先存在这台手机上，有网时自动同步到本页的数据库，Claude 可以直接读取并和行情对齐。比赛中不要刷新页面，也不要清除浏览器数据。</p>
+    </div>
+  </details>
+</main>
+
+<div id="picker" class="picker" hidden>
+  <div class="inner">
+    <p id="pickerTitle">哪一方？</p>
+    <div class="opts">
+      <button type="button" data-team="A" id="pickA">A</button>
+      <button type="button" data-team="B" id="pickB">B</button>
+      <button type="button" data-team="">不确定</button>
+    </div>
+  </div>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+<script>
+(() => {
+'use strict';
+
+/* 数据库结构（Claude 读取用）：
+   sessions/<sid>                 场次信息：preset, A, B, game, created, tz, calib[{kind, phone_ahead_s, at}], tap_count
+   sessions/<sid>/chunks/c<k>     打点分块：{sid, k, taps:[{id, seq, code, label, team, team_name, game,
+                                   t_evt, t_wall, t_mono, note, del}]}
+   t_evt = 手指按下时刻（Unix 毫秒，手机时钟）；phone_ahead_s > 0 表示手机比标准时间快。 */
+
+const CHUNK = 250;
+const LS_KEY = 'taplog.v1';
+const PRESETS = {
+  nba: {
+    A: 'PHI', B: 'BOS', fixed: false, games: false,
+    keys: [
+      { code: 'A2', team: 'A', big: '+2', small: '{A}' },
+      { code: 'A3', team: 'A', big: '+3', small: '{A}' },
+      { code: 'A1', team: 'A', big: '+1', small: '{A} 罚球' },
+      { code: 'B2', team: 'B', big: '+2', small: '{B}' },
+      { code: 'B3', team: 'B', big: '+3', small: '{B}' },
+      { code: 'B1', team: 'B', big: '+1', small: '{B} 罚球' },
+      { code: 'STOP', team: '', big: '暂停', small: '或死球' },
+      { code: 'END', team: '', big: '节末', small: '本节结束' },
+      { code: 'MARK', team: '', big: '标记', small: '其他事件' }
+    ]
+  },
+  lol: {
+    A: '蓝方', B: '红方', fixed: true, games: true,
+    keys: [
+      { code: 'KILL', ask: true, big: '击杀', small: '点后选方' },
+      { code: 'ACE', ask: true, big: '团灭', small: '被团灭的对面' },
+      { code: 'DRAGON', ask: true, big: '小龙', small: '含先锋' },
+      { code: 'BARON', ask: true, big: '大龙', small: '点后选方' },
+      { code: 'ELDER', ask: true, big: '远古龙', small: '点后选方' },
+      { code: 'TOWER', ask: true, big: '推塔', small: '外塔' },
+      { code: 'INHIB', ask: true, big: '高地', small: '高地塔或水晶' },
+      { code: 'NEXUS', ask: true, big: '基地爆', small: '选获胜方' },
+      { code: 'MARK', team: '', big: '标记', small: '其他事件' }
+    ]
+  }
+};
+
+const $ = (s) => document.querySelector(s);
+const pad = (n, w = 2) => String(n).padStart(w, '0');
+const rid = (n) => { const a = 'abcdefghjkmnpqrstuvwxyz23456789'; let s = ''; const r = crypto.getRandomValues(new Uint8Array(n)); for (const x of r) s += a[x % a.length]; return s; };
+const hms = (ms) => { const d = new Date(ms); return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`; };
+const fnv = (str) => { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); } return (h >>> 0).toString(16); };
+const tzName = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { return ''; } };
+
+/* ---------- 本机存储 ---------- */
+let lsOK = true;
+function loadLocal() {
+  let s = null;
+  try { const raw = localStorage.getItem(LS_KEY); if (raw) s = JSON.parse(raw); } catch (e) { lsOK = false; }
+  if (!s || typeof s !== 'object') s = {};
+  s.sessions = s.sessions && typeof s.sessions === 'object' ? s.sessions : {};
+  s.prefs = s.prefs || { preset: 'nba', A: 'PHI', B: 'BOS' };
+  s.written = s.written || {};
+  s.synced = s.synced || {};
+  return s;
+}
+function saveLocal() {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(store)); lsOK = true; } catch (e) { lsOK = false; }
+}
+const store = loadLocal();
+const cur = () => store.sessions[store.current] || null;
+
+function createSession(preset) {
+  const p = PRESETS[preset] ? preset : 'nba';
+  const P = PRESETS[p];
+  const d = new Date();
+  const sid = `s${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}-${rid(4)}`;
+  const meta = {
+    sid, preset: p,
+    A: P.fixed ? P.A : (store.prefs.A || P.A),
+    B: P.fixed ? P.B : (store.prefs.B || P.B),
+    game: 1, created: Date.now(), tz: tzName(), tz_offset_min: -d.getTimezoneOffset(),
+    ua: navigator.userAgent.slice(0, 180), calib: [], v: 1
+  };
+  store.sessions[sid] = { meta, taps: [] };
+  store.current = sid;
+  store.prefs.preset = p;
+  saveLocal();
+}
+if (!cur()) createSession(store.prefs.preset);
+
+/* ---------- 时间 ---------- */
+// 手指按下的时刻：用当前墙钟减去事件发生后经过的单调时间，避免处理延迟。
+function eventEpochMs(ev) {
+  const wall = Date.now();
+  const mono = performance.now();
+  if (ev && typeof ev.timeStamp === 'number') {
+    const lag = mono - ev.timeStamp;
+    if (lag >= 0 && lag < 1000) return Math.round(wall - lag);
+  }
+  return wall;
+}
+
+/* ---------- 打点 ---------- */
+const grid = $('#grid');
+let keyDefs = [];
+let gridSig = '';
+
+function fill(text, m) { return text.replace('{A}', m.A).replace('{B}', m.B); }
+function tapLabel(def, team, m) {
+  if (m.preset === 'nba') return def.team ? `${m[def.team]} ${def.big}` : def.big;
+  return team ? `${def.big} · ${m[team]}` : def.big;
+}
+
+function commit(def, t, el) {
+  const s = cur();
+  const m = s.meta;
+  const team = def.team || '';
+  const tap = {
+    id: `t${Date.now().toString(36)}${rid(3)}`,
+    seq: s.taps.length + 1,
+    code: def.code,
+    label: tapLabel(def, team, m),
+    team,
+    team_name: team ? m[team] : '',
+    game: P().games ? m.game : 0,
+    t_evt: t.t_evt,
+    t_wall: t.t_wall,
+    t_mono: Math.round(t.t_mono * 10) / 10,
+    note: '',
+    del: false
+  };
+  s.taps.push(tap);
+  saveLocal();
+  if (el) { el.classList.remove('hit'); void el.offsetWidth; el.classList.add('hit'); }
+  try { if (navigator.vibrate) navigator.vibrate(12); } catch (e) { /* 不支持就跳过 */ }
+  if (def.ask) openPicker(tap, def);
+  requestWakeLock();
+  scheduleSync(400);
+  render();
+}
+
+const downs = new Map();
+grid.addEventListener('pointerdown', (ev) => {
+  const el = ev.target.closest('.key');
+  if (!el || (ev.button !== undefined && ev.button > 0)) return;
+  downs.set(ev.pointerId, { el, i: Number(el.dataset.i), x: ev.clientX, y: ev.clientY,
+    t_evt: eventEpochMs(ev), t_wall: Date.now(), t_mono: performance.now() });
+  el.classList.add('down');
+});
+grid.addEventListener('pointerup', (ev) => {
+  const p = downs.get(ev.pointerId);
+  if (!p) return;
+  downs.delete(ev.pointerId);
+  p.el.classList.remove('down');
+  if (Math.hypot(ev.clientX - p.x, ev.clientY - p.y) > 28) return;   // 手指滑走视为滚动，不记
+  p.el.dataset.ptr = String(Date.now());
+  commit(keyDefs[p.i], p, p.el);
+});
+grid.addEventListener('pointercancel', (ev) => {
+  const p = downs.get(ev.pointerId);
+  if (p) { p.el.classList.remove('down'); downs.delete(ev.pointerId); }
+});
+grid.addEventListener('click', (ev) => {        // 键盘回车、空格，或不支持 pointer 事件的浏览器
+  const el = ev.target.closest('.key');
+  if (!el) return;
+  if (Date.now() - Number(el.dataset.ptr || 0) < 1500) return;
+  commit(keyDefs[Number(el.dataset.i)], { t_evt: eventEpochMs(ev), t_wall: Date.now(), t_mono: performance.now() }, el);
+});
+
+/* ---------- 选方 ---------- */
+const picker = $('#picker');
+let pickerTap = null;
+let pickerTimer = null;
+function openPicker(tap, def) {
+  const m = cur().meta;
+  pickerTap = tap.id;
+  $('#pickerTitle').textContent = def.code === 'NEXUS' ? '哪一方获胜？' : `${def.big}：哪一方？`;
+  $('#pickA').textContent = m.A;
+  $('#pickB').textContent = m.B;
+  picker.hidden = false;
+  clearTimeout(pickerTimer);
+  pickerTimer = setTimeout(closePicker, 8000);
+}
+function closePicker() { picker.hidden = true; pickerTap = null; clearTimeout(pickerTimer); }
+picker.addEventListener('click', (ev) => {
+  const b = ev.target.closest('button[data-team]');
+  if (!b) return;
+  const s = cur();
+  const tap = s.taps.find((t) => t.id === pickerTap);
+  if (tap) {
+    const def = PRESETS[s.meta.preset].keys.find((k) => k.code === tap.code) || { big: tap.label };
+    tap.team = b.dataset.team;
+    tap.team_name = tap.team ? s.meta[tap.team] : '';
+    tap.label = tapLabel(def, tap.team, s.meta);
+    saveLocal();
+    scheduleSync(400);
+    render();
+  }
+  closePicker();
+});
+
+/* ---------- 撤销与备注 ---------- */
+const lastLive = () => { const s = cur(); for (let i = s.taps.length - 1; i >= 0; i--) if (!s.taps[i].del) return s.taps[i]; return null; };
+$('#undo').addEventListener('click', () => {
+  const t = lastLive();
+  if (!t) { toast('没有可撤销的打点'); return; }
+  t.del = true;
+  saveLocal(); scheduleSync(400); render();
+  toast(`已撤销：${t.label}`, '恢复', () => { t.del = false; saveLocal(); scheduleSync(400); render(); });
+});
+$('#noteToggle').addEventListener('click', () => {
+  const f = $('#noteForm');
+  f.hidden = !f.hidden;
+  if (!f.hidden) { const t = lastLive(); $('#noteInput').value = t ? t.note : ''; $('#noteInput').focus(); }
+});
+$('#noteForm').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  const t = lastLive();
+  if (!t) { toast('还没有打点'); return; }
+  t.note = $('#noteInput').value.trim().slice(0, 120);
+  saveLocal(); scheduleSync(400);
+  $('#noteForm').hidden = true;
+  render();
+  toast(`备注已存到：${t.label}`);
+});
+
+/* ---------- 局数（LoL） ---------- */
+function setGame(n) {
+  const m = cur().meta;
+  m.game = Math.min(5, Math.max(1, n));
+  saveLocal(); scheduleSync(800); render();
+}
+$('#gameMinus').addEventListener('click', () => setGame(cur().meta.game - 1));
+$('#gamePlus').addEventListener('click', () => setGame(cur().meta.game + 1));
+
+/* ---------- 设置 ---------- */
+$('#sessionBtn').addEventListener('click', () => { const d = $('#settings'); d.open = true; d.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+document.querySelectorAll('input[name="preset"]').forEach((r) => r.addEventListener('change', () => {
+  const s = cur();
+  if (s.taps.length) { $('#presetHint').hidden = false; render(); return; }
+  const P2 = PRESETS[r.value];
+  s.meta.preset = r.value;
+  s.meta.A = P2.fixed ? P2.A : (store.prefs.A || P2.A);
+  s.meta.B = P2.fixed ? P2.B : (store.prefs.B || P2.B);
+  store.prefs.preset = r.value;
+  saveLocal(); scheduleSync(800); render();
+}));
+['A', 'B'].forEach((side) => {
+  $(`#team${side}`).addEventListener('change', (ev) => {
+    const v = ev.target.value.trim().slice(0, 12);
+    if (!v) { render(); return; }
+    const s = cur();
+    if (P().fixed) return;
+    s.meta[side] = v;
+    store.prefs[side] = v;
+    saveLocal(); scheduleSync(800); render();
+  });
+});
+let confirmUntil = 0;
+$('#newSession').addEventListener('click', () => {
+  const s = cur();
+  if (s.taps.length && Date.now() > confirmUntil) {
+    confirmUntil = Date.now() + 4000;
+    $('#newSession').textContent = `再点一次确认（当前 ${s.taps.length} 条会保留）`;
+    setTimeout(() => { $('#newSession').textContent = '开始新场次'; }, 4000);
+    return;
+  }
+  confirmUntil = 0;
+  $('#newSession').textContent = '开始新场次';
+  createSession(store.prefs.preset);
+  $('#csvOut').hidden = true;
+  scheduleSync(400); render();
+  toast('已开始新场次');
+});
+
+function addCalib(kind) {
+  const v = parseFloat($('#calVal').value);
+  if (!isFinite(v) || v < 0 || v > 120) { toast('请填 0 到 120 之间的秒数'); return; }
+  const sign = Number($('#calDir').value);
+  const s = cur();
+  s.meta.calib.push({ kind, phone_ahead_s: Math.round(sign * v * 1000) / 1000, at: Date.now() });
+  $('#calVal').value = '';
+  saveLocal(); scheduleSync(400); render();
+  toast(kind === 'pre' ? '已记为赛前对时' : '已记为赛后对时');
+}
+$('#calPre').addEventListener('click', () => addCalib('pre'));
+$('#calPost').addEventListener('click', () => addCalib('post'));
+
+function toCSV(s) {
+  const esc = (v) => { const x = v === null || v === undefined ? '' : String(v); return /[",\n]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x; };
+  const rows = [['session', 'seq', 'game', 'code', 'label', 'team', 'team_name', 't_evt_ms', 't_evt_local', 't_wall_ms', 't_mono_ms', 'note', 'deleted']];
+  for (const t of s.taps) rows.push([s.meta.sid, t.seq, t.game || '', t.code, t.label, t.team, t.team_name, t.t_evt, hms(t.t_evt), t.t_wall, t.t_mono, t.note, t.del ? 1 : 0]);
+  let out = rows.map((r) => r.map(esc).join(',')).join('\n');
+  if (s.meta.calib.length) out += '\n\ncalib_kind,phone_ahead_s,at_ms\n' + s.meta.calib.map((c) => [c.kind, c.phone_ahead_s, c.at].join(',')).join('\n');
+  return out;
+}
+$('#copyCsv').addEventListener('click', async () => {
+  const text = toCSV(cur());
+  const box = $('#csvOut');
+  box.value = text;
+  box.hidden = false;
+  try { await navigator.clipboard.writeText(text); toast('已复制 CSV'); }
+  catch (e) { box.focus(); box.select(); toast('不能直接复制，已选中下面的文本，可手动复制'); }
+});
+
+/* ---------- 提示 ---------- */
+let toastTimer = null;
+function toast(msg, actionText, action) {
+  const el = $('#toast');
+  el.textContent = '';
+  const span = document.createElement('span');
+  span.textContent = msg;
+  el.appendChild(span);
+  if (actionText) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = actionText;
+    b.addEventListener('click', () => { action(); el.hidden = true; });
+    el.appendChild(b);
+  }
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.hidden = true; }, actionText ? 5000 : 2200);
+}
+
+/* ---------- 数据库同步 ---------- */
+let db = null;
+let dbState = 'connecting';   // connecting | slow | ready | none | denied
+let dbErr = null;
+let writing = false;
+let syncTimer = null;
+let backoff = 2000;
+
+function docsFor(s) {
+  const sid = s.meta.sid;
+  const meta = Object.assign({}, s.meta, { tap_count: s.taps.length, chunk_size: CHUNK });
+  const out = [{ key: 'meta', path: `sessions/${sid}`, body: meta }];
+  const n = Math.ceil(s.taps.length / CHUNK);
+  for (let k = 0; k < n; k++) out.push({ key: `c${k}`, path: `sessions/${sid}/chunks/c${k}`, body: { sid, k, taps: s.taps.slice(k * CHUNK, (k + 1) * CHUNK) } });
+  for (const d of out) d.hash = fnv(JSON.stringify(d.body));
+  return out;
+}
+function pendingDocs() {
+  const s = cur();
+  if (!s) return [];
+  return docsFor(s).filter((d) => store.written[`${s.meta.sid}|${d.key}`] !== d.hash);
+}
+function scheduleSync(ms) {
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(syncNow, ms);
+}
+async function syncNow() {
+  renderSync();
+  if (!db || writing) return;
+  const s = cur();
+  if (!s) return;
+  const todo = pendingDocs();
+  if (!todo.length) { dbErr = null; store.synced[s.meta.sid] = s.taps.length; renderSync(); return; }
+  writing = true;
+  const tapsAtStart = s.taps.length;
+  try {
+    for (const d of todo) {
+      await db.doc(d.path).set(d.body);
+      store.written[`${s.meta.sid}|${d.key}`] = d.hash;
+      saveLocal();
+    }
+    dbErr = null;
+    backoff = 2000;
+    store.synced[s.meta.sid] = tapsAtStart;
+    saveLocal();
+  } catch (e) {
+    const code = (e && e.code) || 'unavailable';
+    dbErr = code;
+    if (['revoked', 'not_granted', 'capability_disabled', 'capability_removed'].includes(code)) {
+      db = null; dbState = 'denied';
+    } else if (code === 'invalid_argument' || code === 'quota_exceeded' || code === 'transform_error') {
+      dbState = 'denied';
+    } else {
+      clearTimeout(syncTimer);
+      syncTimer = setTimeout(syncNow, backoff);
+      backoff = Math.min(backoff * 2, 30000);
+    }
+  } finally {
+    writing = false;
+    renderSync();
+    if (db && dbState === 'ready' && !dbErr && pendingDocs().length) scheduleSync(300);
+  }
+}
+
+async function restoreFromDb() {
+  const hasLocal = Object.values(store.sessions).some((x) => x.taps && x.taps.length);
+  if (hasLocal) return;
+  try {
+    const q = await db.collection('sessions').orderBy('created', 'desc').limit(1).get();
+    if (q.empty) return;
+    const d = q.docs[0].data();
+    if (!d || !d.sid || Date.now() - (d.created || 0) > 18 * 3600e3) return;
+    const cq = await db.collection(`sessions/${d.sid}/chunks`).get();
+    const chunks = cq.docs.map((x) => x.data()).filter(Boolean).sort((a, b) => a.k - b.k);
+    const taps = [];
+    for (const c of chunks) for (const t of (c.taps || [])) taps.push(Object.assign({}, t));
+    if (!taps.length) return;
+    const meta = Object.assign({}, d);
+    delete meta.tap_count;
+    delete meta.chunk_size;
+    meta.calib = Array.isArray(d.calib) ? d.calib.map((c) => Object.assign({}, c)) : [];
+    store.sessions[d.sid] = { meta, taps };
+    store.current = d.sid;
+    for (const doc of docsFor(store.sessions[d.sid])) store.written[`${d.sid}|${doc.key}`] = doc.hash;
+    store.synced[d.sid] = taps.length;
+    saveLocal();
+    render();
+    toast(`已从云端恢复上一场（${taps.length} 条）`);
+  } catch (e) { /* 恢复失败不影响打点 */ }
+}
+
+async function initDb() {
+  const slow = setTimeout(() => { if (dbState === 'connecting') { dbState = 'slow'; renderSync(); } }, 10000);
+  try {
+    let tries = 0;
+    while (!(window.claude && typeof window.claude.use === 'function') && tries < 50) { await new Promise((r) => setTimeout(r, 200)); tries++; }
+    if (!(window.claude && typeof window.claude.use === 'function')) { dbState = 'none'; return; }
+    const d = await window.claude.use('db');
+    if (!d) { dbState = 'none'; return; }
+    db = d;
+    dbState = 'ready';
+    await restoreFromDb();
+    scheduleSync(0);
+  } catch (e) {
+    dbState = 'none';
+  } finally {
+    clearTimeout(slow);
+    renderSync();
+  }
+}
+
+function syncView() {
+  const s = cur();
+  const n = s ? s.taps.length : 0;
+  if (!db) {
+    if (dbState === 'connecting') return ['wait', '连接数据库…'];
+    if (!lsOK) return ['bad', '未能保存 · 请勿刷新'];
+    if (dbState === 'slow') return ['warn', '数据库未响应 · 已存本机'];
+    return ['warn', '仅存本机'];
+  }
+  if (dbState === 'denied') return ['bad', '云端写入失败 · 已存本机'];
+  const pend = pendingDocs().length;
+  if (!pend) return ['ok', `已同步 ${n} 条`];
+  const waiting = Math.max(0, n - (store.synced[s.meta.sid] || 0));
+  const label = waiting ? `${waiting} 条` : '修改';
+  if (!navigator.onLine || dbErr) return ['warn', `离线 · 待传 ${label}`];
+  return ['warn', `同步中 · 待传 ${label}`];
+}
+function renderSync() {
+  const [st, text] = syncView();
+  const chip = $('#sync');
+  chip.dataset.s = st;
+  chip.querySelector('span').textContent = text;
+  const banner = $('#banner');
+  if (!lsOK && !db) {
+    banner.hidden = false;
+    banner.textContent = '这台手机不允许本页存数据，数据库也没连上：比赛中别刷新页面，结束后用“复制 CSV”导出。';
+  } else {
+    banner.hidden = true;
+  }
+}
+window.addEventListener('online', () => { dbErr = null; scheduleSync(0); });
+window.addEventListener('offline', renderSync);
+
+/* ---------- 亮屏 ---------- */
+let wakeLock = null;
+async function requestWakeLock() {
+  try {
+    if ('wakeLock' in navigator && !wakeLock && document.visibilityState === 'visible') {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    }
+  } catch (e) { wakeLock = null; }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') { requestWakeLock(); scheduleSync(0); }
+});
+
+/* ---------- 渲染 ---------- */
+function P() { return PRESETS[cur().meta.preset] || PRESETS.nba; }
+function render() {
+  const s = cur();
+  const m = s.meta;
+  const preset = PRESETS[m.preset] || PRESETS.nba;
+  document.body.dataset.preset = m.preset;
+
+  const d = new Date(m.created);
+  const title = m.preset === 'nba' ? `${m.A} vs ${m.B}` : 'LoL';
+  $('#sessionBtn').innerHTML = '';
+  $('#sessionBtn').append(document.createTextNode(title));
+  const small = document.createElement('small');
+  small.textContent = `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())} 开始`;
+  $('#sessionBtn').append(small);
+
+  $('#gameCtl').hidden = !preset.games;
+  $('#gameLabel').textContent = `第 ${m.game} 局`;
+
+  const sig = `${m.preset}|${m.A}|${m.B}`;
+  if (sig !== gridSig) {
+    gridSig = sig;
+    keyDefs = preset.keys;
+    grid.innerHTML = '';
+    preset.keys.forEach((k, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'key';
+      b.dataset.i = String(i);
+      if (k.team) b.dataset.team = k.team;
+      const big = document.createElement('span');
+      big.className = 'big';
+      big.textContent = fill(k.big, m);
+      const sm = document.createElement('span');
+      sm.className = 'small';
+      sm.textContent = fill(k.small, m);
+      b.append(big, sm);
+      b.setAttribute('aria-label', `${fill(k.small, m)} ${fill(k.big, m)}`);
+      grid.appendChild(b);
+    });
+  }
+
+  const live = s.taps.filter((t) => !t.del);
+  $('#count').textContent = `${live.length} 条${s.taps.length !== live.length ? `（撤销 ${s.taps.length - live.length}）` : ''}`;
+
+  const ol = $('#log');
+  ol.innerHTML = '';
+  const recent = s.taps.slice(-10).reverse();
+  if (!recent.length) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = m.preset === 'nba' ? '还没有打点。球进网的瞬间按对应的键。' : '还没有打点。事件发生的瞬间先按键，再选哪一方。';
+    ol.appendChild(li);
+  }
+  recent.forEach((t) => {
+    const idx = s.taps.indexOf(t);
+    let prev = null;
+    for (let j = idx - 1; j >= 0; j--) if (!s.taps[j].del) { prev = s.taps[j]; break; }
+    const li = document.createElement('li');
+    if (t.del) li.className = 'del';
+    const tt = document.createElement('span');
+    tt.className = 't';
+    tt.textContent = hms(t.t_evt);
+    const ll = document.createElement('span');
+    ll.className = 'l';
+    if (t.team) ll.classList.add(t.team === 'A' ? 'tagA' : 'tagB');
+    ll.textContent = (t.game ? `G${t.game} ` : '') + t.label;
+    if (t.note) { const em = document.createElement('em'); em.textContent = ` · ${t.note}`; ll.appendChild(em); }
+    const dd = document.createElement('span');
+    dd.className = 'd';
+    dd.textContent = prev && !t.del ? `+${((t.t_evt - prev.t_evt) / 1000).toFixed(1)}s` : '';
+    li.append(tt, ll, dd);
+    ol.appendChild(li);
+  });
+  const last = lastLive();
+  $('#logMeta').textContent = last ? `上一条 ${Math.max(0, Math.round((Date.now() - last.t_evt) / 1000))} 秒前` : '';
+
+  $('#presetNba').checked = m.preset === 'nba';
+  $('#presetLol').checked = m.preset === 'lol';
+  $('#presetHint').hidden = !s.taps.length;
+  $('#teamFields').hidden = preset.fixed;
+  if (document.activeElement !== $('#teamA')) $('#teamA').value = m.A;
+  if (document.activeElement !== $('#teamB')) $('#teamB').value = m.B;
+
+  const cl = $('#calList');
+  cl.innerHTML = '';
+  m.calib.forEach((c) => {
+    const li = document.createElement('li');
+    const v = c.phone_ahead_s;
+    li.textContent = `${c.kind === 'pre' ? '赛前' : '赛后'} ${hms(c.at).slice(0, 8)}：手机${v >= 0 ? '快' : '慢'} ${Math.abs(v).toFixed(3)} 秒`;
+    cl.appendChild(li);
+  });
+
+  renderSync();
+}
+
+/* ---------- 时钟 ---------- */
+const clockEl = $('#clock');
+function tick() {
+  const d = new Date();
+  clockEl.textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${Math.floor(d.getMilliseconds() / 100)}`;
+}
+setInterval(tick, 100);
+setInterval(() => { const last = lastLive(); $('#logMeta').textContent = last ? `上一条 ${Math.max(0, Math.round((Date.now() - last.t_evt) / 1000))} 秒前` : ''; }, 1000);
+setInterval(() => { if (db && pendingDocs().length && !writing) syncNow(); }, 15000);
+
+tick();
+render();
+initDb();
+})();
+</script>
+</body>
+</html>
