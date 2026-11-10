@@ -976,12 +976,25 @@ def expand_paths(paths: list[str]) -> list[str]:
     for p in paths:
         if os.path.isdir(p):
             for root, _, files in os.walk(p):
-                out += [os.path.join(root, x) for x in files if x.lower().endswith(exts)]
+                # 跳过 CryptoStruct 区间下载自带的清单（MANIFEST.txt、RANGE_MANIFEST.txt），它们不是数据文件
+                out += [os.path.join(root, x) for x in files
+                        if x.lower().endswith(exts) and "manifest" not in x.lower()]
         elif os.path.exists(p):
             out.append(p)
         else:
             print(f"找不到：{p}", file=sys.stderr)
     return sorted(set(out))
+
+
+def load_cs_files(paths: list[str]) -> list[CsFile]:
+    """读取文件头；读不了的（不是 CryptoStruct 文件、损坏）跳过并提示，不中断整次回放。"""
+    out = []
+    for p in expand_paths(paths):
+        try:
+            out.append(CsFile(p))
+        except Exception as e:  # noqa: BLE001
+            print(f"  跳过无法读取的文件：{p}（{type(e).__name__}: {str(e)[:80]}）", file=sys.stderr)
+    return out
 
 
 def map_cs_files(files: list[CsFile], mt: Match, side_mode: str):
@@ -1197,7 +1210,7 @@ def cmd_cs_replay(args) -> int:
     if not matches:
         print("需要 --meta 或 --event-slug 来确定比赛有哪些盘口（可以给多个）。", file=sys.stderr)
         return 2
-    files = [CsFile(p) for p in expand_paths(args.files)]
+    files = load_cs_files(args.files)
     rc = 0
     for mt in matches:
         rc |= _cs_replay_one(args, mt, files, args.out if len(matches) == 1 else None)

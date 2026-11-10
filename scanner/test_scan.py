@@ -337,3 +337,11 @@ full = S.solve(S.Model(M, strict=True), books_from(V, spread=0.005, over=ov), 0.
 capped = S.solve(S.Model(M, strict=True), books_from(V, spread=0.005, over=ov), 0.05, max_cost=30.0)
 assert full.cost > 30.0 and capped.cost <= 30.0 + 1e-6 and 0 < capped.profit < full.profit, (full.cost, capped.cost)
 print(f"referenceOutcome 对应第二个选项、投入上限：通过（不限 ${full.profit:.2f}/${full.cost:.2f}，上限 $30 时 ${capped.profit:.2f}/${capped.cost:.2f}）")
+
+d = tempfile.mkdtemp(prefix="cs_manifest_")
+open(os.path.join(d, "MANIFEST.txt"), "w").write("清单，不是数据\n")
+cs_write(os.path.join(d, "lol-g2-kc.2026-05-16.txt.zst"), "lol-g2-kc", 7, [])
+open(os.path.join(d, "broken.txt.zst"), "wb").write(b"not zstd")
+assert [os.path.basename(f.path) for f in S.load_cs_files([d])] == ["lol-g2-kc.2026-05-16.txt.zst"]
+shutil.rmtree(d)
+print("区间下载目录：通过（跳过 MANIFEST.txt 与损坏文件）")
