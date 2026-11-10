@@ -73,6 +73,15 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, {"scoreboard": {"games": [
                 {"gameId": "0022600999", "homeTeam": {"teamTricode": "NYK"}, "awayTeam": {"teamTricode": "MIA"}},
                 {"gameId": "0022600123", "homeTeam": {"teamTricode": "PHI"}, "awayTeam": {"teamTricode": "BOS"}}]}})
+        if u.path == "/scoreboard_old.json":   # 白天还停在前一天
+            return self._send(200, {"scoreboard": {"gameDate": "2026-11-09", "games": [
+                {"gameId": "0022600203", "homeTeam": {"teamTricode": "ATL"}, "awayTeam": {"teamTricode": "LAL"}}]}})
+        if u.path == "/schedule.json":
+            g = lambda gid, d, h, a: {"gameId": gid, "gameDateEst": d + "T00:00:00Z",
+                                      "homeTeam": {"teamTricode": h}, "awayTeam": {"teamTricode": a}}
+            return self._send(200, {"leagueSchedule": {"gameDates": [
+                {"games": [g("0022600100", "2026-11-03", "PHI", "BOS")]},
+                {"games": [g("0022600212", "2026-11-10", "PHI", "BOS"), g("0022600213", "2026-11-10", "NYK", "MIA")]}]}})
         if u.path == "/pbp/0022600123.json":
             body = pbp_body()
             etag = '"' + hashlib.md5(body).hexdigest() + '"'
@@ -219,6 +228,13 @@ def main():
 
     base = f"http://127.0.0.1:{hp}"
     assert pm_recorder.find_nba_game(base + "/scoreboard.json", "PHI,BOS") == "0022600123"
+    # 比分板还停在前一天：按美东日期查全赛季赛程；同队另一天的比赛不误选
+    assert pm_recorder.find_nba_game(base + "/scoreboard_old.json", "PHI,BOS", base + "/schedule.json",
+                                     "2026-11-10") == "0022600212"
+    assert pm_recorder.find_nba_game(base + "/scoreboard_old.json", "PHI,BOS", base + "/schedule.json",
+                                     "2026-11-11") is None
+    assert pm_recorder.find_nba_game(base + "/scoreboard_old.json", "PHI,BOS") is None
+    print("NBA 比赛编号：比分板优先，查不到时按美东日期查赛程")
 
     out = tempfile.mkdtemp(prefix="rec_test_")
     pm_recorder.SPORTS_UNFILTERED_SAMPLE = 3
@@ -227,6 +243,7 @@ def main():
         "--hours", str(14 / 3600), "--gamma", base, "--clob", base,
         "--market-ws", f"ws://127.0.0.1:{pm}", "--sports-ws", f"ws://127.0.0.1:{ps}",
         "--nba-pbp-url", base + "/pbp/{gid}.json", "--nba-scoreboard-url", base + "/scoreboard.json",
+        "--nba-schedule-url", "",
         "--nba-interval", "0.2", "--no-ntp", "--out", out])
     assert rc == 0
 

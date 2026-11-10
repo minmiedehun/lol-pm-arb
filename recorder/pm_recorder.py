@@ -46,7 +46,7 @@ try:
 except ImportError:  # pragma: no cover
     sys.exit("缺少依赖 websockets：请先运行  python3 -m pip install websockets")
 
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 
 try:
     import certifi
@@ -59,6 +59,9 @@ MARKET_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 SPORTS_WS = "wss://sports-api.polymarket.com/ws"
 NBA_PBP = "https://cdn.nba.com/static/json/liveData/playbyplay/playbyplay_{gid}.json"
 NBA_SCOREBOARD = "https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json"
+# 全赛季赛程（约 7MB）。todaysScoreboard 白天仍停在前一天（11/10 美东 11:25 实测 gameDate=2026-11-09），
+# 查不到时用它按美东日期找比赛编号
+NBA_SCHEDULE = "https://cdn.nba.com/static/json/staticData/scheduleLeagueV2.json"
 NBA_HEADERS = {"Referer": "https://www.nba.com/", "Origin": "https://www.nba.com"}
 UA = "Mozilla/5.0 (read-only research recorder)"
 
@@ -190,14 +193,41 @@ def clob_info(clob: str, condition_id: str) -> dict:
         return {"error": repr(e)}
 
 
-def find_nba_game(url: str, teams: str) -> str | None:
+def find_nba_game(url: str, teams: str, schedule_url: str | None = None, date_est: str | None = None) -> str | None:
+    """先查今日比分板；没有再查全赛季赛程里美东日期 date_est（默认今天）的比赛。"""
     want = {t.strip().upper() for t in teams.split(",") if t.strip()}
-    d = http_json(url, headers=NBA_HEADERS)
-    for g in (d.get("scoreboard") or {}).get("games") or []:
-        codes = {str((g.get("homeTeam") or {}).get("teamTricode", "")).upper(),
-                 str((g.get("awayTeam") or {}).get("teamTricode", "")).upper()}
-        if want and want <= codes:
-            return str(g.get("gameId"))
+    if not want:
+        return None
+    err = None
+    try:
+        d = http_json(url, headers=NBA_HEADERS)
+        for g in (d.get("scoreboard") or {}).get("games") or []:
+            codes = {str((g.get("homeTeam") or {}).get("teamTricode", "")).upper(),
+                     str((g.get("awayTeam") or {}).get("teamTricode", "")).upper()}
+            if want <= codes:
+                return str(g.get("gameId"))
+    except Exception as e:
+        err = e
+    if schedule_url:
+        if not date_est:
+            try:
+                from zoneinfo import ZoneInfo
+                date_est = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+            except Exception:  # 没有时区库：按 UTC−5 近似
+                date_est = datetime.fromtimestamp(time.time() - 5 * 3600, tz=timezone.utc).strftime("%Y-%m-%d")
+        status, body, _ = http_get(schedule_url, timeout=30.0, headers=NBA_HEADERS)
+        if status == 200:
+            sched = json.loads(body.decode("utf-8")).get("leagueSchedule") or {}
+            for gd in sched.get("gameDates") or []:
+                for g in gd.get("games") or []:
+                    if not str(g.get("gameDateEst") or "").startswith(date_est):
+                        continue
+                    codes = {str((g.get("homeTeam") or {}).get("teamTricode", "")).upper(),
+                             str((g.get("awayTeam") or {}).get("teamTricode", "")).upper()}
+                    if want <= codes:
+                        return str(g.get("gameId"))
+    if err:
+        raise err
     return None
 
 
@@ -449,7 +479,8 @@ async def amain(args) -> int:
     gid = args.nba_game_id
     if not gid and args.nba_teams:
         try:
-            gid = await asyncio.to_thread(find_nba_game, args.nba_scoreboard_url, args.nba_teams)
+            gid = await asyncio.to_thread(find_nba_game, args.nba_scoreboard_url, args.nba_teams,
+                                         args.nba_schedule_url or None)
         except Exception as e:
             print(f"[{stamp()}] 自动查找 NBA 比赛失败：{e!r}；可改用 --nba-game-id", flush=True)
         if not gid:
@@ -561,6 +592,7 @@ def parse_args(argv=None):
     p.add_argument("--sports-ws", default=SPORTS_WS)
     p.add_argument("--nba-pbp-url", default=NBA_PBP, help="含 {gid} 占位符")
     p.add_argument("--nba-scoreboard-url", default=NBA_SCOREBOARD)
+    p.add_argument("--nba-schedule-url", default=NBA_SCHEDULE, help="比分板查不到时查的全赛季赛程；给空字符串则不查")
     return p.parse_args(argv)
 
 
