@@ -311,3 +311,29 @@ os.chdir(cwd)
 assert rc == 0 and os.path.exists(os.path.join(d, "cs_scan_lol-g2-kc-a.csv")) and os.path.exists(os.path.join(d, "cs_scan_lol-g2-kc-b.csv"))
 shutil.rmtree(d)
 print("复查补充：通过（非 ASCII 队名、slug 加选项后缀、无 ID 事件、一次回放多场）")
+
+
+# ---------------------------------------------------------------- 9. native_code.referenceOutcome、投入上限
+g1 = LM[("game", 1.0)]
+
+
+class _NF(_F):
+    def __init__(self, code, nc):
+        super().__init__(code)
+        self.inst["native_code"] = nc
+
+    def candidates(self):                     # 与真实文件一样：字典型 native_code 不进候选
+        return [self.inst["code"], os.path.basename(self.path)]
+
+
+nc2 = {"referenceOutcome": "karmine corp", "karmine corp": g1.tokens[1], "g2 esports": g1.tokens[0],
+       "marketSlug": g1.slug}
+mp, um = S.map_cs_files([_NF(g1.slug, nc2), _NF(g1.slug + "-x", json.dumps(nc2))], M, "auto")
+assert [(leg is g1, ti) for _, leg, ti, _ in mp] == [(True, 1), (True, 1)] and not um, mp
+assert "referenceOutcome" in mp[0][3]
+
+ov = {h25.tokens[1]: [(0.40, 100.0)], h25.tokens[0]: [(0.62, 100.0)]}
+full = S.solve(S.Model(M, strict=True), books_from(V, spread=0.005, over=ov), 0.05)
+capped = S.solve(S.Model(M, strict=True), books_from(V, spread=0.005, over=ov), 0.05, max_cost=30.0)
+assert full.cost > 30.0 and capped.cost <= 30.0 + 1e-6 and 0 < capped.profit < full.profit, (full.cost, capped.cost)
+print(f"referenceOutcome 对应第二个选项、投入上限：通过（不限 ${full.profit:.2f}/${full.cost:.2f}，上限 $30 时 ${capped.profit:.2f}/${capped.cost:.2f}）")

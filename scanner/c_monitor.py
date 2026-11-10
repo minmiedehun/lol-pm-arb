@@ -500,7 +500,7 @@ class Monitor:
         self.last_eval_ms = time.monotonic() * 1000
         ts = now_ms()
         t0 = time.perf_counter()
-        r = S.solve(self.model, lb, self.args.fee_rate, self.args.min_shares, exclude=excl)
+        r = S.solve(self.model, lb, self.args.fee_rate, self.args.min_shares, exclude=excl, max_cost=self.args.max_cost)
         dt = (time.perf_counter() - t0) * 1000
         self.c["evals"] += 1
         was_open, n_items = self.ep.cur is not None, len(self.ep.items)
@@ -618,6 +618,7 @@ def parse_args(argv=None):
     p.add_argument("--fee-rate", type=float, default=0.05, help="吃单费率，默认 0.05")
     p.add_argument("--min-profit", type=float, default=0.5, help="报警门槛：可锁定利润（美元），默认 0.5")
     p.add_argument("--min-shares", type=float, default=5.0, help="最小下单量（股），只用于提示，默认 5")
+    p.add_argument("--max-cost", type=float, default=None, help="每次组合的投入上限（美元，含手续费），如 2000；默认不限")
     p.add_argument("--no-void", action="store_true", help="不考虑“整场取消、全部 50-50”")
     p.add_argument("--strict", action="store_true", help="把“开赛后中途终止”也作为约束")
     p.add_argument("--notify", action=argparse.BooleanOptionalAction, default=True,

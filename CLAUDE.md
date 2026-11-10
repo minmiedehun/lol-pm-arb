@@ -101,13 +101,13 @@ python3 recorder/pm_recorder.py --event-slug <slug> --hours 4        # 正式录
 
 ## 尚未核实的假设（改代码前先看）
 
-1. CryptoStruct 文件里的价格属于盘口的哪个选项（默认第一个），`native_code` 存的是什么。用免费样本跑 `cs-inspect` 核实；“交叉占比”应接近 0。
+1. ~~CryptoStruct 文件里的价格属于盘口的哪个选项，`native_code` 存的是什么。~~ **已核实（11/10，免费样本 `lol-tl2-los-2026-10-30-game2`）**：`native_code` 是字典 `{referenceOutcome: 选项名, 各选项名: token id, marketId, marketSlug}`，价格对应 `referenceOutcome`（样本里是第一个选项 Team Liquid；与 CLOB `prices-history` 走势一致，赛后升到约 1，与结算 `["1","0"]` 相符）；交叉占比 0.00%（32 万次检查），断点 0。扫描器现在按 `referenceOutcome` 的 token id 精确对应，不再假设第一个选项。
 2. ~~Polymarket `price_change` 的 `size` 是该档新的总量而非增量，`side=SELL` 是卖单档。~~ **已核实（11/10，决赛盘口实测）**：每条 `price_change` 自带该选项的 `best_bid`/`best_ask`，按“size 为新总量、SELL 为卖单档”重建后，6 分钟 2,140 条全部一致；另 72 次 REST `/book` 抽查全部一致。文档仍没写定义，`c_monitor.py` 持续核对，对不上会报警并用 REST 修复。
 3. 买入手续费从股数扣还是从资金扣，文档没写；按资金计入成本。
 4. ~~Worlds 决赛的真实题目和选项写法。~~ **已核实（11/10，`meta` 导出 42 个盘口）**：题目、选项、slug 后缀与测试构造一致，9 个赛果盘口全部识别（系列赛胜负、第 1–4 局、总局数 3.5/4.5、Gen.G 让 1.5/2.5，让局 slug 为 `-game-handicap-home-*`、选项顺序 Gen.G 在前）；没有第 5 局胜负（第 5 局只有道具盘）；33 个道具盘跳过。
 5. `live --discover` 用的 Gamma 标签 `league-of-legends` 没实测。
 6. ~~已结束赛事能否用 `events?slug=` 直接取到。~~ **已核实（11/10）**：`lol-ig1-gen-2026-11-07` 直接取到；扫描器仍保留 `&closed=true` 的备用请求。
-7. BLG 对 T1 半决赛的 slug 未知；iG 对 Gen.G 是 `lol-ig1-gen-2026-11-07`（来自镜像页；11/10 已用 Gamma 取到，已结束赛事 `events?slug=` 直接可取）。
+7. ~~BLG 对 T1 半决赛的 slug 未知。~~ **已核实（11/10，Gamma）**：`lol-blg-t1-2026-11-08`，开赛 2026-11-08T22:10Z，BLG 3:1；iG 对 Gen.G 是 `lol-ig1-gen-2026-11-07`，开赛 2026-11-07T22:05Z，0:3。两场都跨 UTC 午夜，回放需要 11/07–11/09 三天日包。
 8. `price_change` 在某选项卖单被撤空时 `best_ask` 给什么值（0 还是 1）没见到实例；监控把两者都当“无卖单”。
 9. 单局盘口在比赛中多快结算（Gamma `closed` + `outcomePrices`）未知：监控只在正式结算后收窄情景，结算慢则这期间按全部情景算（只会漏报，不会误报）。
 
@@ -164,6 +164,7 @@ python3 recorder/pm_recorder.py --event-slug <slug> --hours 4        # 正式录
 
 ## 工作约定
 
+- 投入上限：`--max-cost 2000`（live / replay / cs-replay / c_monitor 都支持）按 JN 的单笔规模（几百到 2000u）求利润；不加则吃满可见深度。
 - 改扫描器或录制脚本后跑 `./run_tests.sh`。测试只用本地模拟服务器和合成数据，不联网。
 - 新的结算规则或接口字段，先找到原文出处再改代码，并在注释或文档里写明出处。
 - 扫描器报出的机会默认只是候选：多个选项不能同时成交的风险、吃单延迟都还没建模。

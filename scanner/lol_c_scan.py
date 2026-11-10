@@ -467,8 +467,9 @@ def fee_per_share(p: float, rate: float) -> float:
 
 
 def solve(model: Model, books: dict, fee_rate: float, min_shares: float = 5.0,
-          max_levels: int = 8, exclude=()) -> Result | None:
-    """books: token → 卖单 [(价格, 数量)]，按价格从低到高。exclude: 不可信（如数据断档）的 token。"""
+          max_levels: int = 8, exclude=(), max_cost: float | None = None) -> Result | None:
+    """books: token → 卖单 [(价格, 数量)]，按价格从低到高。exclude: 不可信（如数据断档）的 token。
+    max_cost: 投入上限（美元，含手续费）；给定时求“这笔资金内能锁定的最大利润”，不给则吃满深度。"""
     cols = []   # (token, leg, ti, price, size, unit_cost_with_fee, is_best)
     for tok, (leg, ti, _, _) in model.tok.items():
         if tok in exclude:
@@ -496,7 +497,11 @@ def solve(model: Model, books: dict, fee_rate: float, min_shares: float = 5.0,
     if unit >= 1.0 - 1e-9:
         return Result(0.0, 0.0, 0.0, unit, [], 0)
 
-    res = linprog(np.concatenate([cost, [-1.0]]), A_ub=np.hstack([-P, np.ones((m, 1))]), b_ub=np.zeros(m),
+    A_ub, b_ub = np.hstack([-P, np.ones((m, 1))]), np.zeros(m)
+    if max_cost is not None and max_cost > 0:
+        A_ub = np.vstack([A_ub, np.concatenate([cost, [0.0]])])
+        b_ub = np.concatenate([b_ub, [max_cost]])
+    res = linprog(np.concatenate([cost, [-1.0]]), A_ub=A_ub, b_ub=b_ub,
                   bounds=[(0, float(s)) for s in size] + [(0, None)], method="highs")
     if res.status != 0:
         return Result(0.0, 0.0, 0.0, unit, [], 0)
@@ -704,7 +709,7 @@ def cmd_live(args) -> int:
             t0 = time.time()
             for mt, model in zip(matches, models):
                 books = dict(pool.map(lambda tk: fetch_asks(args.clob, tk), model.tokens()))
-                r = solve(model, books, args.fee_rate, args.min_shares)
+                r = solve(model, books, args.fee_rate, args.min_shares, max_cost=args.max_cost)
                 ts = datetime.now().strftime("%H:%M:%S")
                 if r is None:
                     print(f"[{ts}] {mt.title}：没有卖单")
@@ -827,7 +832,7 @@ def scan_stream(model: Model, books: Books, events, args, label: str) -> Episode
         if sig == last_sig and ep.last_unit >= 1.0 - 1e-9 and ep.cur is None:
             continue
         last_sig, last_ts = sig, ts_ms
-        ep.update(ts_ms, solve(model, lb, args.fee_rate, args.min_shares, exclude=books.suspect))
+        ep.update(ts_ms, solve(model, lb, args.fee_rate, args.min_shares, exclude=books.suspect, max_cost=args.max_cost))
     if last_ts is not None:
         ep.close(last_ts)
     return ep
@@ -987,7 +992,21 @@ def map_cs_files(files: list[CsFile], mt: Match, side_mode: str):
     mapped, unmapped = [], []
     for f in files:
         cands = f.candidates()
-        hit = next(((tok[c][0], tok[c][1], "token id 精确匹配") for c in cands if c in tok), None)
+        hit = None
+        # native_code 为 {"referenceOutcome": 选项名, 选项名: token id, ...}（11/10 用免费样本核实：
+        # lol-tl2-los-2026-10-30-game2 的价格对应 referenceOutcome「team liquid」，与 CLOB prices-history 一致）
+        nc = f.inst.get("native_code")
+        if isinstance(nc, str) and nc.startswith("{"):
+            try:
+                nc = json.loads(nc)
+            except ValueError:
+                nc = None
+        if isinstance(nc, dict) and nc.get("referenceOutcome") is not None:
+            rt = nc.get(nc["referenceOutcome"])
+            if rt is not None and str(rt) in tok:
+                hit = (tok[str(rt)][0], tok[str(rt)][1], f"native_code.referenceOutcome「{nc['referenceOutcome']}」的 token id 精确匹配")
+        if hit is None:
+            hit = next(((tok[c][0], tok[c][1], "token id 精确匹配") for c in cands if c in tok), None)
         if hit is None:
             hit = next(((by_cond[c], None, "condition id 匹配") for c in cands if c in by_cond), None)
         if hit is None:
@@ -1236,6 +1255,8 @@ def main(argv=None) -> int:
         sp.add_argument("--fee-rate", type=float, default=0.05, help="吃单费率，费用 = 费率 × p × (1−p) × 股数；默认 0.05")
         sp.add_argument("--min-profit", type=float, default=0.5, help="报告门槛：可锁定利润（美元），默认 0.5")
         sp.add_argument("--min-shares", type=float, default=5.0, help="最小下单量（股），只用于提示，默认 5")
+        sp.add_argument("--max-cost", type=float, default=None,
+                        help="每次组合的投入上限（美元，含手续费），如 2000；默认不限，吃满可见深度")
         sp.add_argument("--no-void", action="store_true", help="不考虑“整场取消、全部 50-50”")
         sp.add_argument("--strict", action="store_true", help="把“开赛后中途终止”也作为约束")
 
